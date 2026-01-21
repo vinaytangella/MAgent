@@ -18,6 +18,7 @@ failure_count = cwd+"/failure_count.log"
 HOSTNAME = socket.gethostname()
 AGENT_NAME = "CollectMetrics"
 AGENT_VERSION = "1.0.0" 
+AGENT_PATH = cwd+"/CollectMetrics.py"
 
 REPO_URL = "https://raw.githubusercontent.com/vinaytangella/MAgent/refs/heads/main/"
 VERSION_URL = REPO_URL+"VERSION"
@@ -44,6 +45,7 @@ def download_new_agent():
 def replace_agent(new_file):
     backup = AGENT_PATH + ".bak"
     shutil.copy2(AGENT_PATH, backup)
+    print('bew file', new_file)
     shutil.move(new_file, AGENT_PATH)
 
 def perform_update(latest_version):

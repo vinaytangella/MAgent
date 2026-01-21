@@ -45,7 +45,6 @@ def download_new_agent():
 def replace_agent(new_file):
     backup = AGENT_PATH + ".bak"
     shutil.copy2(AGENT_PATH, backup)
-    print('bew file', new_file)
     shutil.move(new_file, AGENT_PATH)
 
 def perform_update(latest_version):

@@ -1,6 +1,7 @@
 import psutil
+import platform
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import socket
 import os
@@ -10,6 +11,11 @@ import tempfile
 import ssl
 import certifi
 import tempfile
+import influxdb_client
+from influxdb_client import InfluxDBClient, Point, WritePrecision, WriteOptions
+from influxdb_client.client.write_api import SYNCHRONOUS
+
+import logging
 
 cwd = str(Path.cwd())
 log_dir = cwd+"/metrics.log"
@@ -23,6 +29,11 @@ AGENT_PATH = cwd+"/CollectMetrics.py"
 REPO_URL = "https://raw.githubusercontent.com/vinaytangella/MAgent/refs/heads/main/"
 VERSION_URL = REPO_URL+"VERSION"
 AGENT_URL = REPO_URL+"CollectMetrics.py"  
+
+influx_token = os.environ.get("INFLUXDB_TOKEN")
+influx_org = "MAgent"
+influx_url = "http://localhost:8086"
+
 
 
 def fetchLatestVersion():
@@ -62,7 +73,7 @@ def agentHeartbeat(status="ok", error=None):
         "version":AGENT_VERSION,
         "status":status,
         "hostname":HOSTNAME,
-        "last_run":datetime.now(),
+        "last_run":datetime.now(timezone.utc),
         "error":error,
         "pid":os.getpid()
     }
@@ -82,25 +93,68 @@ def recordAgentFailures():
 
 def collectMetrics():
     try:
-        cpu = psutil.cpu_percent()
-        memory = psutil.virtual_memory().percent
-        disk = psutil.disk_usage('/').percent
-        with open(log_dir, "a") as f:
-            f.write(f"{datetime.now()} CPU: {cpu}%, Memory: {memory}%, Disk: {disk}%\n")
-        agentHeartbeat()
+        metrics = {
+            "timestamp": datetime.now(timezone.utc),
+
+            "system": {
+                "hostname": socket.gethostname(),
+                "os": platform.system(),
+                "os_version": platform.version(),
+                "architecture": platform.machine()
+            },
+
+            "cpu": {
+                "percent": psutil.cpu_percent(interval=1),
+                "count": psutil.cpu_count(logical=True)
+            },
+
+            "memory": {
+                "total": psutil.virtual_memory().total,
+                "used": psutil.virtual_memory().used,
+                "percent": psutil.virtual_memory().percent
+            },
+
+            "disk": {
+                "disk_total": psutil.disk_usage('/').total,
+                "disk_used": psutil.disk_usage('/').used,
+                "disk_percent": psutil.disk_usage('/').percent
+            },
+
+            "network": {
+                "bytes_sent": psutil.net_io_counters().bytes_sent,
+                "bytes_recv": psutil.net_io_counters().bytes_recv
+            }
+        }
+
+        return metrics
     except Exception as e:
         recordAgentFailures()
         agentHeartbeat(status="error", error=str(e))
+        return {}
 
 if __name__ == "__main__":
     try:
-        latest = fetch_latest_version()
-        if is_update_available(AGENT_VERSION, latest):
-            if perform_update(latest):
-                agentHeartbeat(status="updated", error=None)
-                exit(0)  # let launchd restart us
-    except Exception:
+        # latest = fetch_latest_version()
+        write_client = influxdb_client.InfluxDBClient(url=influx_url, token=influx_token, org=influx_org)
+        logging.error(write_client)
+        write_api = write_client.write_api(write_options=WriteOptions(batch_size=100,flush_interval=5000,retry_interval=2000,max_retries=5))
+        
+        # if is_update_available(AGENT_VERSION, latest):
+        #     if perform_update(latest):
+        #         agentHeartbeat(status="updated", error=None)
+        #         exit(0)  # let launchd restart us
+    except Exception as e:
+        logging.error(f'This is exception: {e}')
         pass  
     while True:
-        collectMetrics()
+        metrics = collectMetrics()
+        point = (
+            Point("system_metrics")
+            .tag("host", socket.gethostname())
+            .field("cpu_percent", metrics.get('cpu')['percent'])
+            .field("cpu_count", metrics.get('cpu')['count'])
+            .field('memory_used', metrics.get('memory')['used'])
+            .field('memory_percent', metrics.get('memory')['percent'])
+            .field('memory_total', metrics.get('memory')['total']))
+        write_api.write(bucket="mac_metrics", record=point)
         time.sleep(10)

@@ -1,0 +1,3 @@
+cotyledon
+kafka-python
+influxdb-client
